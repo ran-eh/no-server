@@ -8,24 +8,33 @@ import (
 	"net/http"
 	"strconv"
 
+	"no-server/inmemorystore"
 	"no-server/store"
 )
 
-var files = store.New()
+var files store.Store = inmemorystore.New()
 
-// All handled calls use this method to return a filename and a step array.
-func sendSteps(w http.ResponseWriter, steps []interface{}, fileName string) {
+// Using a variable for it allows swapping it out with
+// a mock for testing
+var sendSteps = prodSendSteps
+
+func prodSendSteps(w http.ResponseWriter, file store.File, version int) {
 	w.Header().Set("Content-Type", "application/json")
+	steps, err := file.StepsSince(version)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	msg := map[string]interface{}{
-		"fileName": fileName,
+		"fileName": file.Name(),
 		"steps":    steps,
 	}
 	json.NewEncoder(w).Encode(msg)
 }
 
-func createNewFile(w http.ResponseWriter, req *http.Request) {
+func newHandler(w http.ResponseWriter, req *http.Request) {
 	file := files.NewFile()
-	sendSteps(w, file.Steps, file.Name)
+	sendSteps(w, file, 0)
 }
 
 type updateInfo struct {
@@ -66,11 +75,6 @@ func handleUpdate(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	// steps := files[info.FileName].steps
-	// serverVersion := len(files[info.FileName].steps)
-	// log.Printf("%s: client %d attempts to push %d steps",
-	// 	info.FileName, info.ClientID, len(info.ClientSteps))
-
 	if file.Version() == info.ClientVersion {
 		log.Printf("%s: Server += %d steps from client %d", info.FileName, len(info.ClientSteps), info.ClientID)
 		file.AddSteps(info.ClientSteps, info.ClientID)
@@ -81,12 +85,7 @@ func handleUpdate(w http.ResponseWriter, req *http.Request) {
 	}
 	// log.Printf("%s: client %d <= %d steps, %v => %v\n\n",
 	// 	info.FileName, info.ClientID, len(steps)-info.ClientVersion, info.ClientVersion, len(steps))
-	stepsToSend, err := file.StepsSince(info.ClientVersion)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	sendSteps(w, stepsToSend, info.FileName)
+	sendSteps(w, file, info.ClientVersion)
 }
 
 func handleGet(w http.ResponseWriter, req *http.Request) {
@@ -95,9 +94,9 @@ func handleGet(w http.ResponseWriter, req *http.Request) {
 		http.Error(w, "invalid fileName: \"\"", http.StatusBadRequest)
 		return
 	}
-	file, ok := files[fileName]
-	if !ok {
-		http.Error(w, fileName+"does not exist", http.StatusNotFound)
+	file, err := files.GetFile(fileName)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
 		return
 	}
 	versionStr := req.FormValue("version")
@@ -106,7 +105,8 @@ func handleGet(w http.ResponseWriter, req *http.Request) {
 		http.Error(w, "invalid version: "+versionStr, http.StatusBadRequest)
 		return
 	}
-	sendSteps(w, file.Steps, fileName)
+
+	sendSteps(w, file, 0)
 }
 
 func handler(w http.ResponseWriter, req *http.Request) {
@@ -114,7 +114,7 @@ func handler(w http.ResponseWriter, req *http.Request) {
 	w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS, PUT, DELETE")
 	w.Header().Set("Access-Control-Allow-Headers", "Accept, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization")
 	if req.Method == "POST" && req.URL.Path == "/new" {
-		createNewFile(w, req)
+		newHandler(w, req)
 		return
 	}
 	if req.Method == "POST" && req.URL.Path == "/update" {
@@ -128,13 +128,6 @@ func handler(w http.ResponseWriter, req *http.Request) {
 	switch req.Method {
 	case "OPTIONS":
 		return
-	// case "GET":
-	// 	startVersion, err := strconv.ParseInt(req.FormValue("version"), 10, 32)
-	// 	if err != nil {
-	// 		startVersion = 0
-	// 	}
-	// 	sendSteps(w, steps, int(startVersion), fileName)
-	// 	return
 	default:
 		fmt.Fprintf(w, "Sorry, only POST, GET, OPTIONS methods are supported: %v\n", req.Method)
 		return
