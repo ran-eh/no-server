@@ -12,7 +12,7 @@ import (
 	"no-server/store"
 )
 
-var files store.Store = inmemorystore.New()
+var files store.Store = inmemorystore.New(nil)
 
 // Using a variable for it allows swapping it out with
 // a mock for testing
@@ -29,10 +29,10 @@ func prodSendSteps(w http.ResponseWriter, file store.File, version int) {
 		"fileName": file.Name(),
 		"steps":    steps,
 	}
-	json.NewEncoder(w).Encode(msg)
+	_ = json.NewEncoder(w).Encode(msg)
 }
 
-func newHandler(w http.ResponseWriter, req *http.Request) {
+func newHandler(w http.ResponseWriter, _ *http.Request) {
 	file := files.NewFile()
 	sendSteps(w, file, 0)
 }
@@ -46,18 +46,18 @@ type updateInfo struct {
 
 func (u updateInfo) validate(req *http.Request) error {
 	if u.ClientID <= 0 {
-		return fmt.Errorf("Invalid ClientID: %d", u.ClientID)
+		return fmt.Errorf("invalid ClientID: %d", u.ClientID)
 	}
 	if u.FileName == "" {
-		return fmt.Errorf("Invalid FileName: %s", u.FileName)
+		return fmt.Errorf("invalid FileName: %s", u.FileName)
 	}
 	if u.ClientVersion < 0 {
-		return fmt.Errorf("Invalid ClientVersion: %d", u.ClientVersion)
+		return fmt.Errorf("invalid ClientVersion: %d", u.ClientVersion)
 	}
 	return nil
 }
 
-func handleUpdate(w http.ResponseWriter, req *http.Request) {
+func updateHandler(w http.ResponseWriter, req *http.Request) {
 	var info updateInfo
 	if err := json.NewDecoder(req.Body).Decode(&info); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -88,7 +88,7 @@ func handleUpdate(w http.ResponseWriter, req *http.Request) {
 	sendSteps(w, file, info.ClientVersion)
 }
 
-func handleGet(w http.ResponseWriter, req *http.Request) {
+func getHandler(w http.ResponseWriter, req *http.Request) {
 	fileName := req.FormValue("name")
 	if fileName == "" {
 		http.Error(w, "invalid fileName: \"\"", http.StatusBadRequest)
@@ -106,7 +106,7 @@ func handleGet(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	sendSteps(w, file, 0)
+	sendSteps(w, file, int(version))
 }
 
 func handler(w http.ResponseWriter, req *http.Request) {
@@ -118,20 +118,17 @@ func handler(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	if req.Method == "POST" && req.URL.Path == "/update" {
-		handleUpdate(w, req)
+		updateHandler(w, req)
 		return
 	}
 	if req.Method == "GET" {
-		handleGet(w, req)
+		getHandler(w, req)
 		return
 	}
-	switch req.Method {
-	case "OPTIONS":
-		return
-	default:
-		fmt.Fprintf(w, "Sorry, only POST, GET, OPTIONS methods are supported: %v\n", req.Method)
+	if req.Method == "OPTIONS" {
 		return
 	}
+	_, _ = fmt.Fprintf(w, "Sorry, only POST, GET, OPTIONS methods are supported: %v\n", req.Method)
 }
 
 var addr = flag.String("addr", "localhost:8000", "http service address")
