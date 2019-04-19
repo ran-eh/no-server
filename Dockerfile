@@ -3,12 +3,13 @@ FROM golang
 # Name and Email of the author 
 MAINTAINER Ran Ever-Hadani <raanraan@gmail.com>
 # Create app folder 
-RUN mkdir /app
+RUN mkdir -p /go/src/no-server
 # Copy our file in the host contianer to our contianer
-ADD . /app
+ADD . /go/src/no-server
 # Set /app to the go folder as workdir
-WORKDIR /app
+WORKDIR /go/src/no-server
 # Generate binary file from our /app
+RUN go get
 RUN go build
 # Expose the port 3000
 EXPOSE 8000:8000
