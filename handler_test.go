@@ -50,14 +50,14 @@ func TestNewHandler(t *testing.T) {
 	ms := &mocks.MockStore{
 		File: newMockFile,
 	}
-	files = ms
+	oldFiles = ms
 
 	t.Run("NewHandler create new file and returns its handle as version 0", func(t *testing.T) {
 		req := httptest.NewRequest("POST", "http://example.com/new", nil)
 		w := httptest.NewRecorder()
 		ms.On("NewFile").Return(newMockFile)
 		mss.On("Do", w, newMockFile, 0)
-		newHandler(w, req)
+		halndleNew(w, req)
 		mss.AssertExpectations(t)
 		ms.AssertExpectations(t)
 	})
@@ -67,7 +67,7 @@ func TestGetHandler(t *testing.T) {
 	t.Run("Get fails for an invalid file name", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "http://example.com/get?name=&version=0", nil)
 		w := httptest.NewRecorder()
-		getHandler(w, req)
+		handleGet(w, req)
 		resp := w.Result()
 		assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 	})
@@ -78,13 +78,13 @@ func TestGetHandler(t *testing.T) {
 		ms := &mocks.MockStore{
 			File: existingMockFile,
 		}
-		files = ms
+		oldFiles = ms
 
 		req := httptest.NewRequest("GET", "http://example.com/get?name=aFile&version=18", nil)
 		w := httptest.NewRecorder()
 		ms.On("GetFile", mock.Anything).Return(existingMockFile)
 		mss.On("Do", w, &mocks.MockFile{MockName: "anExistingFile"}, 18)
-		getHandler(w, req)
+		handleGet(w, req)
 		mss.AssertExpectations(t)
 		ms.AssertExpectations(t)
 	})
@@ -98,7 +98,7 @@ func TestUpdateHandler(t *testing.T) {
 		ms := &mocks.MockStore{
 			File: existingMockFile,
 		}
-		files = ms
+		oldFiles = ms
 		var b bytes.Buffer
 		ui := &updateInfo{
 			ClientID:      1,
@@ -112,7 +112,7 @@ func TestUpdateHandler(t *testing.T) {
 		ms.On("GetFile", mock.AnythingOfType("string")).Return(&mocks.MockFile{MockName: "anExistingFile"})
 		ms.File.On("AddSteps", []interface{}{"clientSteps"}, 1)
 		mss.On("Do", w, existingMockFile, 10)
-		updateHandler(w, req)
+		handleUpdate(w, req)
 		mss.AssertExpectations(t)
 		ms.AssertExpectations(t)
 		ms.File.AssertExpectations(t)
@@ -124,7 +124,7 @@ func TestUpdateHandler(t *testing.T) {
 		ms := &mocks.MockStore{
 			File: existingMockFile,
 		}
-		files = ms
+		oldFiles = ms
 		var b bytes.Buffer
 		ui := &updateInfo{
 			ClientID:      1,
@@ -138,7 +138,7 @@ func TestUpdateHandler(t *testing.T) {
 		ms.On("GetFile", mock.AnythingOfType("string")).Return(&mocks.MockFile{MockName: "anExistingFile"})
 		// No call to AddSteps!
 		mss.On("Do", w, existingMockFile, 4)
-		updateHandler(w, req)
+		handleUpdate(w, req)
 		mss.AssertExpectations(t)
 		ms.AssertExpectations(t)
 		ms.File.AssertExpectations(t)

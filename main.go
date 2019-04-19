@@ -4,19 +4,38 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"github.com/gorilla/websocket"
 	"log"
 	"net/http"
-	"strconv"
-
 	"no-server/inmemorystore"
 	"no-server/store"
+	"no-server/wspool"
+	"strconv"
+	"sync"
 )
 
-var files store.Store = inmemorystore.New(nil)
+var inject = struct {
+	storage store.Store
+	sendSteps func(w http.ResponseWriter, file store.File, version int)
+}{
+	storage: inmemorystore.New(nil),
+	sendSteps: prodSendSteps,
+}
 
-// Using a variable for it allows swapping it out with
-// a mock for testing
-var sendSteps = prodSendSteps
+// Using a var to allow injecting a mock store for testing,
+type instance struct {
+	File store.File
+	Pool *wspool.Pool
+	lock sync.RWMutex
+}
+
+func newInstance() *instance{
+	pool := wspool.NewPool()
+	go pool.Run()
+	return &instance{File: inject.storage.NewFile(), Pool: pool}
+}
+
+var instances = map[string]*instance{}
 
 func prodSendSteps(w http.ResponseWriter, file store.File, version int) {
 	w.Header().Set("Content-Type", "application/json")
@@ -32,9 +51,10 @@ func prodSendSteps(w http.ResponseWriter, file store.File, version int) {
 	_ = json.NewEncoder(w).Encode(msg)
 }
 
-func newHandler(w http.ResponseWriter, _ *http.Request) {
-	file := files.NewFile()
-	sendSteps(w, file, 0)
+func halndleNew(w http.ResponseWriter, _ *http.Request) {
+	instance := newInstance()
+	instances[instance.File.Name()] = instance
+	inject.sendSteps(w, instance.File, 0)
 }
 
 type updateInfo struct {
@@ -57,7 +77,7 @@ func (u updateInfo) validate(req *http.Request) error {
 	return nil
 }
 
-func updateHandler(w http.ResponseWriter, req *http.Request) {
+func handleUpdate(w http.ResponseWriter, req *http.Request) {
 	var info updateInfo
 	if err := json.NewDecoder(req.Body).Decode(&info); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -69,34 +89,36 @@ func updateHandler(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	file, err := files.GetFile(info.FileName)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusNotFound)
+	instance, found := instances[info.FileName]
+	//file, err := oldFiles.GetFile(info.FileName)
+	if !found {
+		http.Error(w, "instance not found: " + info.FileName, http.StatusNotFound)
 		return
 	}
-
-	if file.Version() == info.ClientVersion {
+	instance.lock.Lock()
+	defer instance.lock.Unlock()
+	if instance.File.Version() == info.ClientVersion {
 		log.Printf("%s: Server += %d steps from client %d", info.FileName, len(info.ClientSteps), info.ClientID)
-		file.AddSteps(info.ClientSteps, info.ClientID)
-		// log.Printf("%s: Server version %d => %d", info.FileName, serverVersion, len(steps))
+		instance.File.AddSteps(info.ClientSteps, info.ClientID)
+		instance.Pool.Broadcast <- true
 	} else {
 		log.Printf("%s: client %d needs to rebase from %v to %v",
-			info.FileName, info.ClientID, info.ClientVersion, file.Version())
+			info.FileName, info.ClientID, info.ClientVersion, instance.File.Version())
 	}
 	// log.Printf("%s: client %d <= %d steps, %v => %v\n\n",
 	// 	info.FileName, info.ClientID, len(steps)-info.ClientVersion, info.ClientVersion, len(steps))
-	sendSteps(w, file, info.ClientVersion)
+	inject.sendSteps(w, instance.File, info.ClientVersion)
 }
 
-func getHandler(w http.ResponseWriter, req *http.Request) {
+func handleGet(w http.ResponseWriter, req *http.Request) {
 	fileName := req.FormValue("name")
 	if fileName == "" {
 		http.Error(w, "invalid fileName: \"\"", http.StatusBadRequest)
 		return
 	}
-	file, err := files.GetFile(fileName)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusNotFound)
+	instance, found := instances[fileName]
+	if !found {
+		http.Error(w, "instance not found: " + fileName, http.StatusNotFound)
 		return
 	}
 	versionStr := req.FormValue("version")
@@ -106,7 +128,9 @@ func getHandler(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	sendSteps(w, file, int(version))
+	instance.lock.RLock()
+	defer instance.lock.RUnlock()
+	inject.sendSteps(w, instance.File, int(version))
 }
 
 func handler(w http.ResponseWriter, req *http.Request) {
@@ -114,15 +138,15 @@ func handler(w http.ResponseWriter, req *http.Request) {
 	w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS, PUT, DELETE")
 	w.Header().Set("Access-Control-Allow-Headers", "Accept, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization")
 	if req.Method == "POST" && req.URL.Path == "/new" {
-		newHandler(w, req)
+		halndleNew(w, req)
 		return
 	}
 	if req.Method == "POST" && req.URL.Path == "/update" {
-		updateHandler(w, req)
+		handleUpdate(w, req)
 		return
 	}
 	if req.Method == "GET" {
-		getHandler(w, req)
+		handleGet(w, req)
 		return
 	}
 	if req.Method == "OPTIONS" {
@@ -133,9 +157,39 @@ func handler(w http.ResponseWriter, req *http.Request) {
 
 var addr = flag.String("addr", "localhost:8000", "http service address")
 
+func serveWs(w http.ResponseWriter, req *http.Request) {
+	fileName := req.FormValue("name")
+	if fileName == "" {
+		http.Error(w, "invalid fileName: \"\"", http.StatusBadRequest)
+		return
+	}
+	log.Printf("ws connection requested for %s", fileName)
+
+	instance, found := instances[fileName]
+	//file, err := oldFiles.GetFile(info.FileName)
+	if !found {
+		http.Error(w, "instance not found: " + fileName, http.StatusNotFound)
+		return
+	}
+
+
+	upgrader := websocket.Upgrader{}
+	upgrader.CheckOrigin = func(_ *http.Request) bool { return true }
+	ws, err := upgrader.Upgrade(w, req, nil)
+	if err != nil {
+		if _, ok := err.(websocket.HandshakeError); !ok {
+			log.Println(err)
+			return
+		}
+	}
+	instance.Pool.Register <- ws
+	log.Printf("ws connection established for %s ", fileName)
+}
+
 func main() {
 	flag.Parse()
 	http.HandleFunc("/", handler)
+	http.HandleFunc("/ws", serveWs)
 	log.Printf("Editor service starting at %s\n", *addr)
 	log.Fatal(http.ListenAndServe(*addr, nil))
 }
