@@ -4,5 +4,5 @@ WORKDIR /go/src/no-server
 ADD . .
 RUN go get
 RUN go build
-EXPOSE 8000:8000
+EXPOSE 8000
 CMD ["./no-server"]

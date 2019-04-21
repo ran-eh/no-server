@@ -155,7 +155,7 @@ func handler(w http.ResponseWriter, req *http.Request) {
 	_, _ = fmt.Fprintf(w, "Sorry, only POST, GET, OPTIONS methods are supported: %v\n", req.Method)
 }
 
-var addr = flag.String("addr", "localhost:8000", "http service address")
+var addr = flag.String("addr", ":8000", "http service address")
 
 func serveWs(w http.ResponseWriter, req *http.Request) {
 	fileName := req.FormValue("name")
