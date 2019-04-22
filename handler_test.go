@@ -20,7 +20,7 @@ func TestSendSteps(t *testing.T) {
 		w := httptest.NewRecorder()
 		f := &mocks.MockFile{MockName: "aNewFile"}
 		version := 19
-		prodSendSteps(w, f, version)
+		sendSteps(w, f, version)
 		resp := w.Result()
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
 		var raw interface{}
@@ -43,21 +43,21 @@ func TestSendSteps(t *testing.T) {
 	})
 }
 
-func TestNewHandler(t *testing.T) {
+func TestHandleNew(t *testing.T) {
 	mss := &mocks.MockSendSteps{}
-	sendSteps = mss.Do
+	inject.sendSteps = mss.Do
 	newMockFile := &mocks.MockFile{MockName: "aNewFile"}
 	ms := &mocks.MockStore{
 		File: newMockFile,
 	}
-	oldFiles = ms
+	inject.storage = ms
 
-	t.Run("NewHandler create new file and returns its handle as version 0", func(t *testing.T) {
+	t.Run("HandleNew create new file and returns its handle as version 0", func(t *testing.T) {
 		req := httptest.NewRequest("POST", "http://example.com/new", nil)
 		w := httptest.NewRecorder()
 		ms.On("NewFile").Return(newMockFile)
 		mss.On("Do", w, newMockFile, 0)
-		halndleNew(w, req)
+		handleNew(w, req)
 		mss.AssertExpectations(t)
 		ms.AssertExpectations(t)
 	})
@@ -73,12 +73,11 @@ func TestGetHandler(t *testing.T) {
 	})
 	t.Run("GetHandler obtains steps for the file and version requested ", func(t *testing.T) {
 		mss := &mocks.MockSendSteps{}
-		sendSteps = mss.Do
 		existingMockFile := &mocks.MockFile{MockName: "anExistingFile"}
 		ms := &mocks.MockStore{
 			File: existingMockFile,
 		}
-		oldFiles = ms
+		inject.sendSteps = mss.Do
 
 		req := httptest.NewRequest("GET", "http://example.com/get?name=aFile&version=18", nil)
 		w := httptest.NewRecorder()
@@ -93,12 +92,11 @@ func TestGetHandler(t *testing.T) {
 func TestUpdateHandler(t *testing.T) {
 	t.Run("UpdateHandler updates returns provided steps when client/server versions match", func(t *testing.T) {
 		mss := &mocks.MockSendSteps{}
-		sendSteps = mss.Do
 		existingMockFile := &mocks.MockFile{MockName: "anExistingFile"}
 		ms := &mocks.MockStore{
 			File: existingMockFile,
 		}
-		oldFiles = ms
+		inject.sendSteps = mss.Do
 		var b bytes.Buffer
 		ui := &updateInfo{
 			ClientID:      1,
@@ -119,12 +117,11 @@ func TestUpdateHandler(t *testing.T) {
 	})
 	t.Run("UpdateHandler updates returned outstanding steps when client/server versions do not match", func(t *testing.T) {
 		mss := &mocks.MockSendSteps{}
-		sendSteps = mss.Do
 		existingMockFile := &mocks.MockFile{MockName: "anExistingFile"}
 		ms := &mocks.MockStore{
 			File: existingMockFile,
 		}
-		oldFiles = ms
+		inject.sendSteps = mss.Do
 		var b bytes.Buffer
 		ui := &updateInfo{
 			ClientID:      1,

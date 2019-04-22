@@ -9,7 +9,7 @@ import (
 	"net/http"
 	"no-server/inmemorystore"
 	"no-server/store"
-	"no-server/wspool"
+	"no-server/sub"
 	"strconv"
 	"sync"
 )
@@ -17,27 +17,29 @@ import (
 var inject = struct {
 	storage store.Store
 	sendSteps func(w http.ResponseWriter, file store.File, version int)
+	ps sub.PubSubber
 }{
-	storage: inmemorystore.New(nil),
-	sendSteps: prodSendSteps,
+	storage:   inmemorystore.New(nil),
+	sendSteps: sendSteps,
+	ps: sub.NewPubSub(),
 }
 
-// Using a var to allow injecting a mock store for testing,
 type instance struct {
-	File store.File
-	Pool *wspool.Pool
-	lock sync.RWMutex
+	File  store.File
+	TopicName string
+	lock  sync.RWMutex
 }
 
 func newInstance() *instance{
-	pool := wspool.NewPool()
-	go pool.Run()
-	return &instance{File: inject.storage.NewFile(), Pool: pool}
+	f := inject.storage.NewFile()
+	inject.ps.NewTopic(f.Name())
+	return &instance{File: inject.storage.NewFile(), TopicName: f.Name()}
 }
 
 var instances = map[string]*instance{}
 
-func prodSendSteps(w http.ResponseWriter, file store.File, version int) {
+func sendSteps(w http.ResponseWriter, file store.File, version int) {
+	log.Println("entered sendSteps")
 	w.Header().Set("Content-Type", "application/json")
 	steps, err := file.StepsSince(version)
 	if err != nil {
@@ -51,7 +53,7 @@ func prodSendSteps(w http.ResponseWriter, file store.File, version int) {
 	_ = json.NewEncoder(w).Encode(msg)
 }
 
-func halndleNew(w http.ResponseWriter, _ *http.Request) {
+func handleNew(w http.ResponseWriter, _ *http.Request) {
 	instance := newInstance()
 	instances[instance.File.Name()] = instance
 	inject.sendSteps(w, instance.File, 0)
@@ -100,13 +102,17 @@ func handleUpdate(w http.ResponseWriter, req *http.Request) {
 	if instance.File.Version() == info.ClientVersion {
 		log.Printf("%s: Server += %d steps from client %d", info.FileName, len(info.ClientSteps), info.ClientID)
 		instance.File.AddSteps(info.ClientSteps, info.ClientID)
-		instance.Pool.Broadcast <- true
+		if err := inject.ps.Publish(instance.TopicName); err != nil {
+			http.Error(w, err.Error(), http.StatusNotFound)
+			return
+		}
 	} else {
 		log.Printf("%s: client %d needs to rebase from %v to %v",
 			info.FileName, info.ClientID, info.ClientVersion, instance.File.Version())
 	}
 	// log.Printf("%s: client %d <= %d steps, %v => %v\n\n",
 	// 	info.FileName, info.ClientID, len(steps)-info.ClientVersion, info.ClientVersion, len(steps))
+	log.Println("about to enter sendSteps")
 	inject.sendSteps(w, instance.File, info.ClientVersion)
 }
 
@@ -138,7 +144,7 @@ func handler(w http.ResponseWriter, req *http.Request) {
 	w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS, PUT, DELETE")
 	w.Header().Set("Access-Control-Allow-Headers", "Accept, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization")
 	if req.Method == "POST" && req.URL.Path == "/new" {
-		halndleNew(w, req)
+		handleNew(w, req)
 		return
 	}
 	if req.Method == "POST" && req.URL.Path == "/update" {
@@ -172,7 +178,6 @@ func serveWs(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-
 	upgrader := websocket.Upgrader{}
 	upgrader.CheckOrigin = func(_ *http.Request) bool { return true }
 	ws, err := upgrader.Upgrade(w, req, nil)
@@ -182,7 +187,9 @@ func serveWs(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 	}
-	instance.Pool.Register <- ws
+	if err = inject.ps.Subscribe(instance.TopicName, ws); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+	}
 	log.Printf("ws connection established for %s ", fileName)
 }
 
