@@ -2,6 +2,7 @@ package mocks
 
 import (
 	"errors"
+	"github.com/gorilla/websocket"
 	"net/http"
 	"no-server/store"
 
@@ -39,6 +40,7 @@ func (s *MockStore) GetFile(name string) (f store.File, err error) {
 
 type MockFile struct {
 	MockName string
+	Ver int
 	mock.Mock
 }
 
@@ -57,7 +59,7 @@ func (f *MockFile) AddSteps(newSteps []interface{}, clientID int) {
 	f.Called(newSteps, clientID)
 }
 
-func (f *MockFile) Version() int { return 10 }
+func (f *MockFile) Version() int { return f.Ver }
 
 type MockNameGenerator struct {
 	Name string
@@ -66,3 +68,15 @@ type MockNameGenerator struct {
 func (g MockNameGenerator) New() string {
 	return g.Name
 }
+
+type MockPubSub struct {
+	mock.Mock
+}
+
+func (ps * MockPubSub) NewTopic(topicName string) {
+	ps.Called(topicName)
+}
+
+func (ps * MockPubSub) Publish(string) error{return nil}
+func (ps * MockPubSub) Subscribe(string, *websocket.Conn) error{return nil}
+func (ps * MockPubSub) Unsubscribe(string, *websocket.Conn) error{return nil}

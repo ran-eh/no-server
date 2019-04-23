@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"no-server/mocks"
 
-	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
 	"github.com/stretchr/testify/assert"
@@ -51,12 +50,15 @@ func TestHandleNew(t *testing.T) {
 		File: newMockFile,
 	}
 	inject.storage = ms
+	ps := &mocks.MockPubSub{}
+	inject.ps = ps
 
-	t.Run("HandleNew create new file and returns its handle as version 0", func(t *testing.T) {
+	t.Run("HandleNew creates a new file and a pubsub topic for it.  Returns its state as version 0", func(t *testing.T) {
 		req := httptest.NewRequest("POST", "http://example.com/new", nil)
 		w := httptest.NewRecorder()
 		ms.On("NewFile").Return(newMockFile)
 		mss.On("Do", w, newMockFile, 0)
+		ps.On("NewTopic", "aNewFile")
 		handleNew(w, req)
 		mss.AssertExpectations(t)
 		ms.AssertExpectations(t)
@@ -71,73 +73,59 @@ func TestGetHandler(t *testing.T) {
 		resp := w.Result()
 		assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 	})
-	t.Run("GetHandler obtains steps for the file and version requested ", func(t *testing.T) {
+	t.Run("GetHandler obtains steps for the file for version requested ", func(t *testing.T) {
+		f := &mocks.MockFile{MockName: "aFile"}
+		instances["aFile"] = &instance{File: f}
 		mss := &mocks.MockSendSteps{}
-		existingMockFile := &mocks.MockFile{MockName: "anExistingFile"}
-		ms := &mocks.MockStore{
-			File: existingMockFile,
-		}
+		//existingMockFile := &mocks.MockFile{MockName: "anExistingFile"}
+		//ms := &mocks.MockStore{
+		//	File: existingMockFile,
+		//}
 		inject.sendSteps = mss.Do
 
 		req := httptest.NewRequest("GET", "http://example.com/get?name=aFile&version=18", nil)
 		w := httptest.NewRecorder()
-		ms.On("GetFile", mock.Anything).Return(existingMockFile)
-		mss.On("Do", w, &mocks.MockFile{MockName: "anExistingFile"}, 18)
+		//ms.On("GetFile", mock.Anything).Return(existingMockFile)
+		mss.On("Do", w, f, 18)
 		handleGet(w, req)
 		mss.AssertExpectations(t)
-		ms.AssertExpectations(t)
+		//ms.AssertExpectations(t)
 	})
 }
 
 func TestUpdateHandler(t *testing.T) {
+	mss := &mocks.MockSendSteps{}
+	f := &mocks.MockFile{MockName: "aFile", Ver: 10}
+	instances["aFile"] = &instance{File: f, TopicName: "aFile"}
+	inject.sendSteps = mss.Do
+	ps := &mocks.MockPubSub{}
+	inject.ps = ps
+	var b bytes.Buffer
+	ui := &updateInfo{
+		ClientID:    1,
+		ClientSteps: []interface{}{"clientSteps"},
+		FileName:    "aFile",
+	}
 	t.Run("UpdateHandler updates returns provided steps when client/server versions match", func(t *testing.T) {
-		mss := &mocks.MockSendSteps{}
-		existingMockFile := &mocks.MockFile{MockName: "anExistingFile"}
-		ms := &mocks.MockStore{
-			File: existingMockFile,
-		}
-		inject.sendSteps = mss.Do
-		var b bytes.Buffer
-		ui := &updateInfo{
-			ClientID:      1,
-			ClientSteps:   []interface{}{"clientSteps"},
-			ClientVersion: 10,
-			FileName:      "anExistingFile",
-		}
+		ui.ClientVersion = 10
 		_ = json.NewEncoder(&b).Encode(ui)
-		req := httptest.NewRequest("PUT", "http://example.com/get?name=aFile&version=18", &b)
+		req := httptest.NewRequest("PUT", "http://example.com/update", &b)
 		w := httptest.NewRecorder()
-		ms.On("GetFile", mock.AnythingOfType("string")).Return(&mocks.MockFile{MockName: "anExistingFile"})
-		ms.File.On("AddSteps", []interface{}{"clientSteps"}, 1)
-		mss.On("Do", w, existingMockFile, 10)
+		f.On("AddSteps", []interface{}{"clientSteps"}, 1)
+		mss.On("Do", w, f, 10)
 		handleUpdate(w, req)
 		mss.AssertExpectations(t)
-		ms.AssertExpectations(t)
-		ms.File.AssertExpectations(t)
+		f.AssertExpectations(t)
+		//ms.File.AssertExpectations(t)
 	})
 	t.Run("UpdateHandler updates returned outstanding steps when client/server versions do not match", func(t *testing.T) {
-		mss := &mocks.MockSendSteps{}
-		existingMockFile := &mocks.MockFile{MockName: "anExistingFile"}
-		ms := &mocks.MockStore{
-			File: existingMockFile,
-		}
-		inject.sendSteps = mss.Do
-		var b bytes.Buffer
-		ui := &updateInfo{
-			ClientID:      1,
-			ClientSteps:   []interface{}{"clientSteps"},
-			ClientVersion: 4,
-			FileName:      "anExistingFile",
-		}
+		ui.ClientVersion = 4
 		_ = json.NewEncoder(&b).Encode(ui)
-		req := httptest.NewRequest("PUT", "http://example.com/get?name=aFile&version=18", &b)
+		req := httptest.NewRequest("PUT", "http://example.com/update", &b)
 		w := httptest.NewRecorder()
-		ms.On("GetFile", mock.AnythingOfType("string")).Return(&mocks.MockFile{MockName: "anExistingFile"})
-		// No call to AddSteps!
-		mss.On("Do", w, existingMockFile, 4)
+		mss.On("Do", w, f, 4)
 		handleUpdate(w, req)
 		mss.AssertExpectations(t)
-		ms.AssertExpectations(t)
-		ms.File.AssertExpectations(t)
+		f.AssertExpectations(t)
 	})
 }

@@ -17,10 +17,12 @@ import (
 var inject = struct {
 	storage store.Store
 	sendSteps func(w http.ResponseWriter, file store.File, version int)
+	//newInstance func() *instance
 	ps sub.PubSubber
 }{
 	storage:   inmemorystore.New(nil),
 	sendSteps: sendSteps,
+	//newInstance: newInstance,
 	ps: sub.NewPubSub(),
 }
 
@@ -55,7 +57,7 @@ func sendSteps(w http.ResponseWriter, file store.File, version int) {
 
 func handleNew(w http.ResponseWriter, _ *http.Request) {
 	instance := newInstance()
-	instances[instance.File.Name()] = instance
+	instances[instance.TopicName] = instance
 	inject.sendSteps(w, instance.File, 0)
 }
 
@@ -77,6 +79,29 @@ func (u updateInfo) validate(req *http.Request) error {
 		return fmt.Errorf("invalid ClientVersion: %d", u.ClientVersion)
 	}
 	return nil
+}
+
+func handleGet(w http.ResponseWriter, req *http.Request) {
+	fileName := req.FormValue("name")
+	if fileName == "" {
+		http.Error(w, "invalid fileName: \"\"", http.StatusBadRequest)
+		return
+	}
+	instance, found := instances[fileName]
+	if !found {
+		http.Error(w, "instance not found: " + fileName, http.StatusNotFound)
+		return
+	}
+	versionStr := req.FormValue("version")
+	version, err := strconv.ParseInt(versionStr, 10, 32)
+	if err != nil || version < 0 {
+		http.Error(w, "invalid version: "+versionStr, http.StatusBadRequest)
+		return
+	}
+
+	instance.lock.RLock()
+	defer instance.lock.RUnlock()
+	inject.sendSteps(w, instance.File, int(version))
 }
 
 func handleUpdate(w http.ResponseWriter, req *http.Request) {
@@ -112,31 +137,7 @@ func handleUpdate(w http.ResponseWriter, req *http.Request) {
 	}
 	// log.Printf("%s: client %d <= %d steps, %v => %v\n\n",
 	// 	info.FileName, info.ClientID, len(steps)-info.ClientVersion, info.ClientVersion, len(steps))
-	log.Println("about to enter sendSteps")
 	inject.sendSteps(w, instance.File, info.ClientVersion)
-}
-
-func handleGet(w http.ResponseWriter, req *http.Request) {
-	fileName := req.FormValue("name")
-	if fileName == "" {
-		http.Error(w, "invalid fileName: \"\"", http.StatusBadRequest)
-		return
-	}
-	instance, found := instances[fileName]
-	if !found {
-		http.Error(w, "instance not found: " + fileName, http.StatusNotFound)
-		return
-	}
-	versionStr := req.FormValue("version")
-	version, err := strconv.ParseInt(versionStr, 10, 32)
-	if err != nil || version < 0 {
-		http.Error(w, "invalid version: "+versionStr, http.StatusBadRequest)
-		return
-	}
-
-	instance.lock.RLock()
-	defer instance.lock.RUnlock()
-	inject.sendSteps(w, instance.File, int(version))
 }
 
 func handler(w http.ResponseWriter, req *http.Request) {
@@ -171,23 +172,18 @@ func serveWs(w http.ResponseWriter, req *http.Request) {
 	}
 	log.Printf("ws connection requested for %s", fileName)
 
-	instance, found := instances[fileName]
-	//file, err := oldFiles.GetFile(info.FileName)
-	if !found {
-		http.Error(w, "instance not found: " + fileName, http.StatusNotFound)
-		return
-	}
-
 	upgrader := websocket.Upgrader{}
 	upgrader.CheckOrigin = func(_ *http.Request) bool { return true }
 	ws, err := upgrader.Upgrade(w, req, nil)
 	if err != nil {
-		if _, ok := err.(websocket.HandshakeError); !ok {
-			log.Println(err)
+		if hsError, ok := err.(websocket.HandshakeError); !ok {
+			log.Println(hsError)
 			return
 		}
+		log.Println(err)
+		return
 	}
-	if err = inject.ps.Subscribe(instance.TopicName, ws); err != nil {
+	if err = inject.ps.Subscribe(fileName, ws); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 	}
 	log.Printf("ws connection established for %s ", fileName)

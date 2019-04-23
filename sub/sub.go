@@ -30,12 +30,12 @@ func (ps *PubSub) NewTopic(topicName string) {
 		subscribers: make(map[*websocket.Conn]bool),
 	}
 	go t.Run()
-	ps.Topics[topicName] = t;
+	ps.Topics[topicName] = t
 }
 
 func (ps *PubSub) getTopic(topicName string) (topic *topic, err error){
 	topic = ps.Topics[topicName]
-	if (topic == nil) {
+	if topic == nil {
 		err = fmt.Errorf("topic %s not found", topicName)
 	}
 	return
@@ -73,19 +73,6 @@ type topic struct {
 	Publish chan bool
 	Subscribe chan *websocket.Conn
 	Unsubscribe chan *websocket.Conn
-}
-
-func NewTopic() *topic {
-	log.Println("topic created")
-
-	t := &topic{
-		Publish:   make(chan bool),
-		Subscribe: make(chan *websocket.Conn),
-		Unsubscribe: make(chan *websocket.Conn),
-		subscribers: make(map[*websocket.Conn]bool),
-	}
-	go t.Run()
-	return t;
 }
 
 func (t *topic) Run() {
