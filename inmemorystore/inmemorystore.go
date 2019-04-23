@@ -1,3 +1,4 @@
+// This package implements in-memory storage for edit histories
 package inmemorystore
 
 import (
@@ -11,13 +12,15 @@ import (
 	"github.com/akamensky/base58"
 )
 
+// File "names" are generated using this interface
 type NameGenerator interface {
 	New() string
 }
 
-type prodNameGenerator struct{}
+type randomNameGenerate struct{}
 
-func (png prodNameGenerator) New() string {
+// Generate ramdom file "name"
+func (ng randomNameGenerate) New() string {
 	data := make([]byte, 4)
 	_, err := rand.Read(data)
 	if err != nil {
@@ -26,16 +29,19 @@ func (png prodNameGenerator) New() string {
 	return base58.Encode(data)
 }
 
+// An in-memory implementation of store.Store
 type Store struct {
 	files         map[string]store.File
+	// Injected name generator.  Allows mocking for test.
 	nameGenerator NameGenerator
 }
 
 func New(nameGenerator NameGenerator) *Store {
+	// By default, use random name generator
 	if nameGenerator == nil {
-		nameGenerator = &prodNameGenerator{}
+		nameGenerator = &randomNameGenerate{}
 	}
-	return &Store{map[string]store.File{}, nameGenerator}
+	return &Store{files: map[string]store.File{}, nameGenerator: nameGenerator}
 }
 
 func (s *Store) NewFile() store.File {

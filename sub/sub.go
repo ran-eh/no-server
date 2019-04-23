@@ -1,3 +1,4 @@
+// This package implements a websocket based subscription service for edits
 package sub
 
 import (
@@ -6,6 +7,8 @@ import (
 	"log"
 )
 
+// Interface to allow mocking the pubsub package for unit testing
+// for other packages that use this package.
 type PubSubber interface {
 	NewTopic(string)
 	Publish(string) error
@@ -13,6 +16,7 @@ type PubSubber interface {
 	Unsubscribe(string, *websocket.Conn) error
 }
 
+// The production implementation of PubSubber
 type PubSub struct {
 	Topics map [string]*topic
 }
@@ -68,8 +72,13 @@ func (ps *PubSub) Unsubscribe(topicName string, ws *websocket.Conn) error {
 	return nil
 }
 
+// The topic type implements the subscription service
+// for one topic.
 type topic struct {
 	subscribers map[*websocket.Conn]bool
+	// Publish notification to subscribers does not carry a payload.  It is
+	// a subscriber's responsibility to make a query the service for new
+	// edits.
 	Publish chan bool
 	Subscribe chan *websocket.Conn
 	Unsubscribe chan *websocket.Conn
@@ -88,6 +97,7 @@ func (t *topic) Run() {
 				log.Println("subscriber removed")
 			}
 		case <-t.Publish:
+			log.Println("Publish called")
 			for client := range t.subscribers {
 				if err := client.WriteMessage(websocket.TextMessage, []byte("hey")); err != nil {
 					log.Printf("write error: %v", err)

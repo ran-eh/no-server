@@ -112,6 +112,7 @@ func TestUpdateHandler(t *testing.T) {
 		req := httptest.NewRequest("PUT", "http://example.com/update", &b)
 		w := httptest.NewRecorder()
 		f.On("AddSteps", []interface{}{"clientSteps"}, 1)
+		ps.On("Publish", "aFile")
 		mss.On("Do", w, f, 10)
 		handleUpdate(w, req)
 		mss.AssertExpectations(t)

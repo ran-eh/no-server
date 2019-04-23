@@ -1,3 +1,4 @@
+// This package contains mocks for unit testing
 package mocks
 
 import (
@@ -10,16 +11,10 @@ import (
 )
 
 type MockSendSteps struct {
-	w       http.ResponseWriter
-	file    store.File
-	version int
 	mock.Mock
 }
 
 func (mss *MockSendSteps) Do(w http.ResponseWriter, file store.File, version int) {
-	mss.w = w
-	mss.file = file
-	mss.version = version
 	mss.Called(w, file, version)
 }
 
@@ -77,6 +72,9 @@ func (ps * MockPubSub) NewTopic(topicName string) {
 	ps.Called(topicName)
 }
 
-func (ps * MockPubSub) Publish(string) error{return nil}
+func (ps * MockPubSub) Publish(topicName string) error{
+	ps.Called(topicName)
+	return nil
+}
 func (ps * MockPubSub) Subscribe(string, *websocket.Conn) error{return nil}
 func (ps * MockPubSub) Unsubscribe(string, *websocket.Conn) error{return nil}

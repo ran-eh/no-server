@@ -41,7 +41,7 @@ func TestAddSteps(t *testing.T) {
 
 func TestStepsSince(t *testing.T) {
 	f := inmemorystore.File{FileName: "aName", Steps: []interface{}{1, 2, 3, 4, 5}}
-	t.Run("StepsSince return all steps for requested version 0", func(t *testing.T) {
+	t.Run("StepsSince returns all steps for requested version 0", func(t *testing.T) {
 		steps, err := f.StepsSince(0)
 		require.NoError(t, err)
 		assert.Equal(t, []interface{}{1, 2, 3, 4, 5}, steps)

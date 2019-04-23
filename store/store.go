@@ -1,3 +1,4 @@
+// This package define the interfaces for edit history storage
 package store
 
 type Store interface {
