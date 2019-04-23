@@ -5,6 +5,7 @@ To build and run
 
 ```bash
 git clone https://github.com/ran-eh/no-server
+cd no-server
 docker build -t no-server .
 docker run -p 8000:800 no-server &
 ```
